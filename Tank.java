@@ -5,27 +5,54 @@ import com.badlogic.gdx.Input;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.g2d.TextureAtlas;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
+import com.badlogic.gdx.graphics.g2d.freetype.FreeType;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Vector2;
+import com.badlogic.gdx.graphics.GL20;
+import com.badlogic.gdx.graphics.g2d.BitmapFont;
 
-public class Tank extends GameObject {
+public class Tank extends GameObject implements Poolable {
+    public enum Owner {
+        PLAYER, AI
+    }
+
+    private Owner ownerType;
+    private Weapon weapon;
     private Vector2 destination;
     private TextureRegion[] textures;
+    private TextureRegion progressbarTexture;
+    private int hp;
     private float angle;
     private float speed;
     private float rotationSpeed;
+    private BitmapFont fontTank;
 
     private float moveTimer;
     private float timePerFrame;
+    private int container;
+    private boolean selected;
 
-    public Tank(GameController gc, float x, float y) {
+    @Override
+    public boolean isActive() {
+        return hp > 0;
+    }
+
+    public Tank(GameController gc) {
         super(gc);
-        this.position.set(x, y);
-        this.destination = new Vector2(position);
-        this.textures = Assets.getInstance().getAtlas().findRegion("tankanim").split(64, 64)[0];
-        this.speed = 120.0f;
+        this.progressbarTexture = Assets.getInstance().getAtlas().findRegion("progressbar");
         this.timePerFrame = 0.08f;
         this.rotationSpeed = 90.0f;
+        this.fontTank = Assets.getInstance().getAssetManager().get("fonts/font32.ttf");
+    }
+
+    public void setup(Owner ownerType, float x, float y) {
+        this.textures = Assets.getInstance().getAtlas().findRegion("tankanim").split(64,64)[0];
+        this.position.set(x, y);
+        this.ownerType = ownerType;
+        this.speed = 120.0f;
+        this.hp = 100;
+        this.weapon = new Weapon(Weapon.Type.HARVEST, 3.0f, 1);
+        this.destination = new Vector2(position);
     }
 
     private int getCurrentFrameIndex() {
@@ -33,50 +60,75 @@ public class Tank extends GameObject {
     }
 
     public void update(float dt) {
-        if (Gdx.input.justTouched()) {
-            destination.set(Gdx.input.getX(), 720 - Gdx.input.getY());
+        //Выбор танка:
+        if (Gdx.input.isButtonPressed(Input.Buttons.LEFT)) {
+            if (Math.abs(this.position.x - Gdx.input.getX()) < 50
+                    && Math.abs(this.position.y - (720 - Gdx.input.getY())) < 50) {
+                selected = true;
+            } else {
+                selected = false;
+            }
         }
-        if (position.dst(destination) > 3.0f) {
-            float angleTo = tmp.set(destination).sub(position).angle();
-            if (Math.abs(angle - angleTo) > 3.0f) {
-                if (angle > angleTo) {
-                    if (Math.abs(angle - angleTo) <= 180.0f) {
-                        angle -= rotationSpeed * dt;
-                    } else {
-                        angle += rotationSpeed * dt;
-                    }
-                } else {
-                    if (Math.abs(angle - angleTo) <= 180.0f) {
-                        angle += rotationSpeed * dt;
-                    } else {
-                        angle -= rotationSpeed * dt;
-                    }
+            if (Gdx.input.isButtonPressed(Input.Buttons.RIGHT)) {
+                if (selected) {
+                    destination.set(Gdx.input.getX(), 720 - Gdx.input.getY());
                 }
             }
-            if (angle < 0.0f) {
-                angle += 360.0f;
-            }
-            if (angle > 360.0f) {
-                angle -= 360.0f;
-            }
 
-            moveTimer += dt;
-            tmp.set(speed, 0).rotate(angle);
-            position.mulAdd(tmp, dt);
-            if (position.dst(destination) < 120.0f && Math.abs(angleTo - angle) > 10) {
-                position.mulAdd(tmp, -dt);
+            if (position.dst(destination) > 3.0f) {
+                float angleTo = tmp.set(destination).sub(position).angle();
+                if (Math.abs(angle - angleTo) > 3.0f) {
+                    if (angle > angleTo) {
+                        if (Math.abs(angle - angleTo) <= 180.0f) {
+                            angle -= rotationSpeed * dt;
+                        } else {
+                            angle += rotationSpeed * dt;
+                        }
+                    } else {
+                        if (Math.abs(angle - angleTo) <= 180.0f) {
+                            angle += rotationSpeed * dt;
+                        } else {
+                            angle -= rotationSpeed * dt;
+                        }
+                    }
+                }
+                if (angle < 0.0f) {
+                    angle += 360.0f;
+                }
+                if (angle > 360.0f) {
+                    angle -= 360.0f;
+                }
+
+                moveTimer += dt;
+                tmp.set(speed, 0).rotate(angle);
+                position.mulAdd(tmp, dt);
+                if (position.dst(destination) < 120.0f && Math.abs(angleTo - angle) > 10) {
+                    position.mulAdd(tmp, -dt);
+                }
             }
-        }
-        if (Gdx.input.isKeyJustPressed(Input.Keys.K)) {
-            fire();
-        }
-        checkBounds();
+            updateWeapon(dt);
+            checkBounds();
+
     }
 
-    public void fire() {
-        tmp.set(position).add(32 * MathUtils.cosDeg(angle), 32 * MathUtils.sinDeg(angle));
-        gc.getProjectilesController().setup(tmp, angle);
+    public void updateWeapon(float dt) {
+        if (weapon.getType() == Weapon.Type.HARVEST) {
+             if (container < 2){
+                if (gc.getMap().getResourceCount(this) > 0) {
+                    int result = weapon.use(dt);
+                    if (result > -1) {
+                        container += gc.getMap().harvestResource(this, result);
+                    }
+                } else {
+                    weapon.reset();
+                }
+            } else {
+                container = 0;
+            }
+
+        }
     }
+
 
     public void checkBounds() {
         if (position.x < 40) {
@@ -93,7 +145,22 @@ public class Tank extends GameObject {
         }
     }
 
+
+
     public void render(SpriteBatch batch) {
         batch.draw(textures[getCurrentFrameIndex()], position.x - 40, position.y - 40, 40, 40, 80, 80, 1, 1, angle);
+
+        //Отрисовка загруженности контейнера
+        fontTank.draw(batch, "Picked: "+String.valueOf(container), position.x + 40, position.y - 40, 0, 0, false);
+
+        if (weapon.getType() == Weapon.Type.HARVEST && weapon.getUsageTimePercentage() > 0.0f) {
+            batch.setColor(0.2f, 0.2f, 0.0f, 1.0f);
+            batch.draw(progressbarTexture, position.x - 32, position.y + 30, 64, 12);
+            batch.setColor(1.0f, 1.0f, 0.0f, 1.0f);
+            batch.draw(progressbarTexture, position.x - 30, position.y + 32, 60 * weapon.getUsageTimePercentage(), 8);
+            batch.setColor(1.0f, 1.0f, 1.0f, 1.0f);
+
+
+        }
     }
 }
